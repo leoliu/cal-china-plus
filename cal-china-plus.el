@@ -242,7 +242,6 @@ Prefix argument ARG makes the entry nonmarking."
                                                      diary-chinese-entry-symbol)
                          `((,(format "^%s?\\(%s\\)" (regexp-quote diary-nonmarking-symbol)
                                      (regexp-quote diary-chinese-entry-symbol))
-                            1 font-lock-reference-face nil t)))
-                        t)
+                            1 font-lock-reference-face nil t))))
 
 ;;; cal-china-plus.el ends here
