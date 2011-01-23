@@ -1,6 +1,6 @@
 ;;; cal-china-plus.el --- extra stuff for cal-china
 
-;; Copyright (C) 2008, 2009, 2010  Leo
+;; Copyright (C) 2008, 2009, 2010, 2011  Leo
 
 ;; Author: Leo <sdl.web@gmail.com>
 ;; Keywords: calendar, convenience, local
@@ -230,18 +230,26 @@ Prefix argument ARG makes the entry nonmarking."
 (define-key calendar-mode-map "iCm" 'diary-chinese-insert-monthly-entry)
 (define-key calendar-mode-map "iCy" 'diary-chinese-insert-yearly-entry)
 
-(provide 'cal-china-plus)
+;;; font lock support for Chinese dates; see also
+;;; `diary-font-lock-keywords'.
+;;;###autoload
+(defun diary-chinese-font-lock ()
+  (font-lock-add-keywords nil
+                          (append
+                           (diary-font-lock-keywords-1 diary-chinese-mark-entries
+                                                       diary-chinese-list-entries
+                                                       cal-china-plus
+                                                       calendar-chinese-month-name-array
+                                                       diary-chinese-entry-symbol)
+                           `((,(format "^%s?\\(%s\\)" (regexp-quote diary-nonmarking-symbol)
+                                       (regexp-quote diary-chinese-entry-symbol))
+                              1 font-lock-reference-face nil t)))))
 
-;;; See `diary-font-lock-keywords'
-(font-lock-add-keywords 'diary-mode
-                        (append
-                         (diary-font-lock-keywords-1 diary-chinese-mark-entries
-                                                     diary-chinese-list-entries
-                                                     cal-china-plus
-                                                     calendar-chinese-month-name-array
-                                                     diary-chinese-entry-symbol)
-                         `((,(format "^%s?\\(%s\\)" (regexp-quote diary-nonmarking-symbol)
-                                     (regexp-quote diary-chinese-entry-symbol))
-                            1 font-lock-reference-face nil t))))
+;; See (info "(elisp)Customizing Keywords") for why doing it through
+;; mode hook
+;;;###autoload
+(add-hook 'diary-mode-hook 'diary-chinese-font-lock)
+
+(provide 'cal-china-plus)
 
 ;;; cal-china-plus.el ends here
