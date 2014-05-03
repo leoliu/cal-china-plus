@@ -1,1 +1,8 @@
 See the header of cal-china-plus.el
+
+[2014-05-04 Sun] Merged upstream and will appear in emacs 24.5. See
+http://debbugs.gnu.org/17393 for details. This package now provides
+the upstream features for emacs < 24.5.
+
+NOTE: the representation of the year of a Chinese date in the diary
+has changed.

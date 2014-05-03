@@ -1,8 +1,8 @@
-;;; cal-china-plus.el --- extra stuff for cal-china
+;;; cal-china-plus.el --- extensions to cal-china
 
-;; Copyright (C) 2008, 2009, 2010, 2011  Leo
+;; Copyright (C) 2008-2014  Leo Liu
 
-;; Author: Leo <sdl.web@gmail.com>
+;; Author: Leo Liu <sdl.web@gmail.com>
 ;; Keywords: calendar, convenience, local
 
 ;; This program is free software; you can redistribute it and/or
@@ -21,26 +21,29 @@
 
 ;;; Commentary:
 
-;; All functions are prefixed with calendar-chinese- unless it is
-;; already in cal-china.el; in this case, it is prefixed with
-;; calendar-chinese-plus-.
-
-;; *NB*: the Chinese calendar date is represented with '(month day
-;; nlyear) instead of '(cycle year month day) in the dary file, where
-;; nlyear is Nong-Li year offset by constant 2697. For example, Cycle
-;; 78 Year 25 is Nong-Li year 4705 but for convenience it is
-;; represented as 2008 (i.e. 4705 - 2697) in the diary file.
+;; In the diary the cycle and year of a Chinese date is combined using
+;; this formula: (+ (* cycle 100) year).
+;;
+;; These two functions convert to and back from this representation:
+;; `calendar-chinese-from-absolute-for-diary' and
+;; `calendar-chinese-to-absolute-for-diary'.
+;;
+;; The features that were implemented in this package have been merged
+;; upstream and will appear in emacs 24.5; see
+;; http://debbugs.gnu.org/17393. Thus the package is now providing the
+;; upstream features for emacs < 24.5.
 
 ;;; Usage
 
 ;; (require 'cal-china-plus)
-;; (add-hook 'diary-nongregorian-listing-hook 'diary-chinese-list-entries)
-;; (add-hook 'diary-nongregorian-marking-hook 'diary-chinese-mark-entries)
+;; (add-hook 'diary-nongregorian-listing-hook #'diary-chinese-list-entries)
+;; (add-hook 'diary-nongregorian-marking-hook #'diary-chinese-mark-entries)
 
 ;; Optionally you may restart Emacs to have Chinese dates properly
 ;; fontified in diary mode.
 
-;; With the setup above, the following keys are available in Calendar:
+;; With the setup above, the following keys are available in Calendar
+;; window:
 
 ;;  KEY      COMMAND
 ;;  ======   ======================================
@@ -55,165 +58,101 @@
 ;;; Code:
 
 (require 'cal-china)
-(require 'diary-lib)
-
-;;;; ---- modifications to existing variables and functions ----
-;;; NB: this section is completely optional. I think I stole this from
-;;; cal-china-x.el by William Xu. - Leo [2010/12/16]
-(setq calendar-chinese-celestial-stem
-      ["甲" "乙" "丙" "丁" "戊" "己" "庚" "辛" "壬" "癸"])
-(setq calendar-chinese-terrestrial-branch
-      ["子" "丑" "寅" "卯" "辰" "巳" "午" "未" "申" "酉" "戌" "亥"])
-(defun calendar-chinese-sexagesimal-name (n)
-  "The N-th name of the Chinese sexagesimal cycle.
-N congruent to 1 gives the first name, N congruent to 2 gives the second name,
-..., N congruent to 60 gives the sixtieth name."
-  ;; "%s-%s" -> "%s%s", since Chinese characters are tight one by one,
-  ;; no extra `-' needed.
-  (format "%s%s"
-          (aref calendar-chinese-celestial-stem (% (1- n) 10))
-          (aref calendar-chinese-terrestrial-branch (% (1- n) 12))))
-;;;; ---- end of modifications ----
-
-;; Don't set this to ["1" "2" "3" "4" "5" "6" "7" "8" "9" "10" "11" "12"]
-(defconst calendar-chinese-month-name-array
-  ["正月" "二月" "三月" "四月" "五月" "六月"
-   "七月" "八月" "九月" "十月" "冬月" "腊月"])
+(eval-when-compile (require 'diary-lib))
 
 (defcustom diary-chinese-entry-symbol "C"
   "Symbol indicating a diary entry according to the Chinese calendar."
   :type 'string
   :group 'diary)
 
-;;; nlyear 2008 is NongLi 4705 or Cycle 78 Year 25 Code adapted from
-;;; `calendar-chinese-to-absolute'
-(defun calendar-chinese-year-to-nlyear (cycle year)
-  (+ (* (1- cycle) 60)                  ; years prior to current cycle
-     (1- year)                          ; years prior to current year
-     -2636))
+(define-key calendar-mode-map "iCa" 'diary-chinese-insert-anniversary-entry)
+(define-key calendar-mode-map "iCd" 'diary-chinese-insert-entry)
+(define-key calendar-mode-map "iCm" 'diary-chinese-insert-monthly-entry)
+(define-key calendar-mode-map "iCy" 'diary-chinese-insert-yearly-entry)
 
-(defun calendar-chinese-year-from-nlyear (nlyear)
-  "Return Chinese Cycle and Year for NLYEAR."
-  (let ((c-year (+ nlyear 2696)))
-    (list (/ c-year 60)
-          (1+ (mod c-year 60)))))
+(autoload 'calendar-mark-1         "diary-lib")
+(autoload 'diary-mark-entries-1    "diary-lib")
+(autoload 'diary-list-entries-1    "diary-lib")
+(autoload 'diary-insert-entry-1    "diary-lib")
+(autoload 'diary-date-display-form "diary-lib")
+(autoload 'diary-make-date         "diary-lib")
+(autoload 'diary-ordinal-suffix    "diary-lib")
+(defvar diary-sexp-entry-symbol)
+(defvar date)
+(defvar entry)                    ;used by `diary-chinese-anniversary'
 
-(defun calendar-chinese-from-absolute* (date)
-  "The returned date is in the form '(month day nlyear)."
-  (let* ((c-date (calendar-chinese-from-absolute date))
-         (cycle (nth 0 c-date))
-         (year (nth 1 c-date))
-         ;; handle leap month
-         (month (floor (nth 2 c-date)))
-         (day (nth 3 c-date))
-         (nlyear (calendar-chinese-year-to-nlyear cycle year)))
-    (list month day nlyear)))
+;; Don't set this to ["1" "2" "3" "4" "5" "6" "7" "8" "9" "10" "11" "12"]
+(defvar calendar-chinese-month-name-array
+  ["正月" "二月" "三月" "四月" "五月" "六月"
+   "七月" "八月" "九月" "十月" "冬月" "臘月"])
 
-;; date example: '(month day nlyear)
-(defun calendar-chinese-to-absolute* (date)
-  (let* ((year (car (last date)))
-         (cy (calendar-chinese-year-from-nlyear year))
-         (c-date (append cy (list (car date) (cadr date)))))
-    (calendar-chinese-to-absolute c-date)))
+;;; NOTE: In the diary the cycle and year of a Chinese date is
+;;; combined using this formula: (+ (* cycle 100) year).
+;;;
+;;; These two functions convert to and back from this representation.
+(defun calendar-chinese-from-absolute-for-diary (date)
+  (pcase-let ((`(,c ,y ,m ,d) (calendar-chinese-from-absolute date)))
+    (list m d (+ (* c 100) y))))
 
-;;;###autoload
-(defun diary-chinese-list-entries ()
-  "Add any Chinese date entries from the diary file to `diary-entries-list'.
-Chinese date diary entries must be prefaced by `diary-chinese-entry-symbol'
-\(normally an `I').  The same `diary-date-forms' govern the style
-of the Chinese calendar entries. If an Islamic date diary entry begins with
-`diary-nonmarking-symbol', the entry will appear in the diary listing,
-but will not be marked in the calendar.
-This function is provided for use with `diary-nongregorian-listing-hook'."
-  (diary-list-entries-1 calendar-chinese-month-name-array
-                        diary-chinese-entry-symbol
-                        'calendar-chinese-from-absolute*))
+(defun calendar-chinese-to-absolute-for-diary (date)
+  (pcase-let ((`(,m ,d ,y) date))
+    (calendar-chinese-to-absolute
+     (list (floor y 100) (mod y 100) m d))))
 
-;;; calendar-mark-1 seems only work with islamic and bahai
 (defun calendar-chinese-mark-date-pattern (month day year &optional color)
-  "Mark dates in calendar window that conform to chinese date MONTH/DAY/YEAR.
-A value of 0 in any position is a wildcard.  Optional argument COLOR is
-passed to `calendar-mark-visible-date' as MARK."
-  (with-current-buffer calendar-buffer
-    (if (and (not (zerop month)) (not (zerop day)))
-        (if (not (zerop year))
-            ;; Fully specified date.
-            (let ((date (calendar-gregorian-from-absolute
-                         (calendar-chinese-to-absolute* (list month day year)))))
-              (if (calendar-date-is-visible-p date)
-                  (calendar-mark-visible-date date color)))
-          ;; Month and day in any year.
-          (let ((gdate (calendar-nongregorian-visible-p
-                        month day 'calendar-chinese-to-absolute*
-                        'calendar-chinese-from-absolute*
-                        (lambda (m) (< m 6)))))
-            (if gdate (calendar-mark-visible-date gdate color))))
-      (calendar-mark-complex month day year
-                             'calendar-chinese-from-absolute* color))))
+  (calendar-mark-1 month day year
+                   #'calendar-chinese-from-absolute-for-diary
+                   #'calendar-chinese-to-absolute-for-diary
+                   color))
 
 ;;;###autoload
 (defun diary-chinese-mark-entries ()
   "Mark days in the calendar window that have Chinese date diary entries.
 Marks each entry in `diary-file' (or included files) visible in the calendar
 window.  See `diary-chinese-list-entries' for more information.
+
 This function is provided for use with `diary-nongregorian-marking-hook'."
-  (diary-mark-entries-1 'calendar-chinese-mark-date-pattern
+  (diary-mark-entries-1 #'calendar-chinese-mark-date-pattern
                         calendar-chinese-month-name-array
                         diary-chinese-entry-symbol
-                        'calendar-chinese-from-absolute*))
+                        #'calendar-chinese-from-absolute-for-diary))
 
 ;;;###autoload
-(defun diary-chinese-insert-entry (arg)
-  "Insert a diary entry.
-For the Chinese date corresponding to the date indicated by point.
-Prefix argument ARG makes the entry nonmarking."
-  (interactive "P")
-  (diary-insert-entry-1 nil arg calendar-chinese-month-name-array
+(defun diary-chinese-list-entries ()
+  "Add any Chinese date entries from the diary file to `diary-entries-list'.
+Chinese date diary entries must be prefixed by `diary-chinese-entry-symbol'
+\(normally a `C').  The same `diary-date-forms' govern the style
+of the Chinese calendar entries.  If a Chinese date diary entry begins with
+`diary-nonmarking-symbol', the entry will appear in the diary listing,
+but will not be marked in the calendar.
+
+This function is provided for use with `diary-nongregorian-listing-hook'."
+  (diary-list-entries-1 calendar-chinese-month-name-array
                         diary-chinese-entry-symbol
-                        'calendar-chinese-from-absolute*))
+                        #'calendar-chinese-from-absolute-for-diary))
 
 ;;;###autoload
-(defun diary-chinese-insert-monthly-entry (arg)
-  "Insert a monthly diary entry.
-For the day of the Chinese month corresponding to the date indicated by point.
-Prefix argument ARG makes the entry nonmarking."
-  (interactive "P")
-  (diary-insert-entry-1 'monthly arg calendar-chinese-month-name-array
-                        diary-chinese-entry-symbol
-                        'calendar-chinese-from-absolute*))
-
-;;;###autoload
-(defun diary-chinese-insert-yearly-entry (arg)
-  "Insert an annual diary entry.
-For the day of the Chinese year corresponding to the date indicated by point.
-Prefix argument ARG makes the entry nonmarking."
-  (interactive "P")
-  (diary-insert-entry-1 'yearly arg calendar-chinese-month-name-array
-                        diary-chinese-entry-symbol
-                        'calendar-chinese-from-absolute*))
-
-(defvar date)
-(defvar entry)
-
-;;;###autoload
-(defun diary-chinese-anniversary (month day &optional nlyear mark)
-  "Anniversary diary entry in Chinese MONTH, DAY and NLYEAR."
-  (let* ((ddate (diary-make-date month day nlyear))
-         (dd (calendar-extract-day ddate))
-         (mm (calendar-extract-month ddate))
-         (yy (calendar-extract-year ddate))
-         (a-date (calendar-absolute-from-gregorian date))
-         (c-date (calendar-chinese-from-absolute* a-date))
-         (mm2 (calendar-extract-month c-date))
-         (dd2 (calendar-extract-day c-date))
-         (yy2 (calendar-extract-year c-date))
-         (diff (if yy (- yy2 yy) 100)))
-    (and (> diff 0) (= mm mm2) (= dd dd2)
+(defun diary-chinese-anniversary (month day &optional year mark)
+  "Like `diary-anniversary' (which see) but accepts Chinese date."
+  (pcase-let* ((ddate (diary-make-date month day year))
+               (`(,dc ,dy ,dm ,dd)      ;diary chinese date
+                (if year
+                    (calendar-chinese-from-absolute
+                     (calendar-chinese-to-absolute-for-diary ddate))
+                  (list nil nil (calendar-extract-month ddate)
+                        (calendar-extract-day ddate))))
+               (`(,cc ,cy ,cm ,cd)      ;current chinese date
+                (calendar-chinese-from-absolute
+                 (calendar-absolute-from-gregorian date)))
+               (diff (if (and dc dy)
+                         (+ (* 60 (- cc dc)) (- cy dy))
+                       100)))
+    (and (> diff 0) (= dm cm) (= dd cd)
          (cons mark (format entry diff (diary-ordinal-suffix diff))))))
 
 ;;;###autoload
-(defun diary-chinese-insert-anniversary-entry (arg)
-  "Insert an anniversary diary entry for the Chinese date given by point.
+(defun diary-chinese-insert-anniversary-entry (&optional arg)
+  "Insert an anniversary diary entry for the Chinese date at point.
 Prefix argument ARG makes the entry nonmarking."
   (interactive "P")
   (let ((calendar-date-display-form (diary-date-display-form)))
@@ -221,14 +160,35 @@ Prefix argument ARG makes the entry nonmarking."
      (format "%s(diary-chinese-anniversary %s)"
              diary-sexp-entry-symbol
              (calendar-date-string
-              (calendar-chinese-from-absolute*
+              (calendar-chinese-from-absolute-for-diary
                (calendar-absolute-from-gregorian (calendar-cursor-to-date t)))))
      arg)))
 
-(define-key calendar-mode-map "iCa" 'diary-chinese-insert-anniversary-entry)
-(define-key calendar-mode-map "iCd" 'diary-chinese-insert-entry)
-(define-key calendar-mode-map "iCm" 'diary-chinese-insert-monthly-entry)
-(define-key calendar-mode-map "iCy" 'diary-chinese-insert-yearly-entry)
+;;;###autoload
+(defun diary-chinese-insert-entry (&optional arg)
+  "Insert a diary entry for the Chinese date at point."
+  (interactive "P")
+  (diary-insert-entry-1 nil arg calendar-chinese-month-name-array
+                        diary-chinese-entry-symbol
+                        #'calendar-chinese-from-absolute-for-diary))
+
+;;;###autoload
+(defun diary-chinese-insert-monthly-entry (&optional arg)
+  "Insert a monthly diary entry for the Chinese date at point."
+  (interactive "P")
+  (diary-insert-entry-1 'monthly arg calendar-chinese-month-name-array
+                        diary-chinese-entry-symbol
+                        #'calendar-chinese-from-absolute-for-diary))
+
+;;;###autoload
+(defun diary-chinese-insert-yearly-entry (&optional arg)
+  "Insert a yearly diary entry for the Chinese date at point."
+  (interactive "P")
+  (diary-insert-entry-1 'yearly arg calendar-chinese-month-name-array
+                        diary-chinese-entry-symbol
+                        #'calendar-chinese-from-absolute-for-diary))
+
+(declare-function diary-font-lock-date-forms "diary-lib")
 
 ;;; font lock support for Chinese dates; see also
 ;;; `diary-font-lock-keywords'.
@@ -245,11 +205,8 @@ Prefix argument ARG makes the entry nonmarking."
                                        (regexp-quote diary-chinese-entry-symbol))
                               1 font-lock-reference-face nil t)))))
 
-;; See (info "(elisp)Customizing Keywords") for why doing it through
-;; mode hook
 ;;;###autoload
 (add-hook 'diary-mode-hook 'diary-chinese-font-lock)
 
 (provide 'cal-china-plus)
-
 ;;; cal-china-plus.el ends here
