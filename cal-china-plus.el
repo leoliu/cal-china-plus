@@ -92,18 +92,30 @@
 ;;; These two functions convert to and back from this representation.
 (defun calendar-chinese-from-absolute-for-diary (date)
   (pcase-let ((`(,c ,y ,m ,d) (calendar-chinese-from-absolute date)))
-    (list m d (+ (* c 100) y))))
+    ;; Note: For leap months M is a float.
+    (list (floor m) d (+ (* c 100) y))))
 
-(defun calendar-chinese-to-absolute-for-diary (date)
-  (pcase-let ((`(,m ,d ,y) date))
+(defun calendar-chinese-to-absolute-for-diary (date &optional prefer-leap)
+  (pcase-let* ((`(,m ,d ,y) date)
+               (cycle (floor y 100))
+               (year (mod y 100))
+               (months (calendar-chinese-months cycle year))
+               (lm (+ (floor m) 0.5)))
     (calendar-chinese-to-absolute
-     (list (floor y 100) (mod y 100) m d))))
+     (if (and prefer-leap (memql lm months))
+         (list cycle year lm d)
+       (list cycle year m d)))))
 
 (defun calendar-chinese-mark-date-pattern (month day year &optional color)
   (calendar-mark-1 month day year
                    #'calendar-chinese-from-absolute-for-diary
                    #'calendar-chinese-to-absolute-for-diary
-                   color))
+                   color)
+  (unless (zerop month)
+    (calendar-mark-1 month day year
+                     #'calendar-chinese-from-absolute-for-diary
+                     (lambda (date) (calendar-chinese-to-absolute-for-diary date t))
+                     color)))
 
 ;;;###autoload
 (defun diary-chinese-mark-entries ()
@@ -147,7 +159,9 @@ This function is provided for use with `diary-nongregorian-listing-hook'."
                (diff (if (and dc dy)
                          (+ (* 60 (- cc dc)) (- cy dy))
                        100)))
-    (and (> diff 0) (= dm cm) (= dd cd)
+    (and (> diff 0)
+         (or (= dm cm) (= (+ 0.5 dm) cm))
+         (= dd cd)
          (cons mark (format entry diff (diary-ordinal-suffix diff))))))
 
 ;;;###autoload
